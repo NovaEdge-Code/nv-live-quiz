@@ -55,7 +55,9 @@ input:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-l)}
 .msg.ok{background:var(--ok-l);color:#11603d}
 .msg.warn{background:var(--warn-l);color:#8a4b00}
 .res{margin-top:18px;padding:18px;border-radius:14px;border:1.5px solid var(--line)}
-.res .r{font-weight:700;font-size:22px}
+.res .r{font-weight:700;font-size:22px;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.res .r .pts{font-family:var(--latin);font-size:26px;font-weight:700}
+.score.big b{font-size:40px}
 .res.ok{border-color:var(--ok);background:var(--ok-l)}.res.ok .r{color:var(--ok)}
 .res.ng .r{color:var(--ng)}
 .res .a{font-size:14px;color:var(--sub);margin-top:4px}
@@ -107,30 +109,35 @@ const tq=new URLSearchParams(location.search).get('t');
 const TP=(tq&&/^[A-Za-z0-9_-]{3,60}$/.test(tq))?tq:TOPIC;
 const REHEARSAL=TP!==TOPIC;
 const KEY='iw-quiz-player-'+TP;
-let S={pid:null,name:'',sid:null,ans:{},hist:{},pend:false,skew:0};
+const ONLY=(new URLSearchParams(location.search).get('mq')||'').split(',').filter(x=>/^[a-z]+$/.test(x)); // testing: restrict brokers
+let S={pid:null,name:'',sid:null,ans:{},rt:{},shown:{},hist:{},pend:false,skew:0};
 try{const v=JSON.parse(localStorage.getItem(KEY)||'null');if(v)S=Object.assign(S,v)}catch(e){}
 if(!S.pid)S.pid=Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);
-S.hist=S.hist||{};S.ans=S.ans||{};S.skew=+S.skew||0;
+S.hist=S.hist||{};S.ans=S.ans||{};S.rt=S.rt||{};S.shown=S.shown||{};S.skew=+S.skew||0;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 save();
 let C=null,NET={},sending=false,tick=null,pick=null,lastSent=0,editing=false,draft=null;
 const NQ=()=>QUIZ.length;
 
-function snapshot(){return {v:3,sid:S.sid,pid:S.pid,name:S.name,ans:S.ans,ts:Date.now(),mq:sync.mqttUp()}}
+function snapshot(){return {v:3,sid:S.sid||'',pid:S.pid,name:S.name,ans:S.ans,rt:S.rt,ts:Date.now(),mq:sync.mqttUp()}}
 async function push(kind){
-  if(!S.name||!S.sid)return false;
-  const mode=kind==='sync'?'never':(C&&C.hostMqtt===false?'force':'fallback');
-  const ok=await sync.publishPlayer(snapshot(),mode);
+  /* without a session id we can only say hello in last-resort mode (lets the host start posting to ntfy) */
+  if(!S.name||(!S.sid&&!sync.fallback()))return false;
+  const ok=await sync.publishPlayer(snapshot(),kind==='sync'?'never':'answer');
   if(ok){lastSent=Date.now();if(S.pend){S.pend=false;save()}}
   return ok;
 }
 function netOK(){return Object.values(NET).some(v=>v==='live')}
-function myScore(){let c=0,r=0;if(C&&C.ra)Object.entries(C.ra).forEach(([q,a])=>{r++;if(S.ans[q]===a)c++});return {c,r}}
-function scoreBox(){const m=myScore();return m.r?`<div class="score"><div><span>${esc(STR.scoreLabel)}</span><b>${fmt(STR.scoreOf,{c:m.c,r:m.r})}</b></div></div>`:''}
+/* same formula as the deck: correct → base + bonus × (remaining / limit); response time measured on this phone */
+function ptsFor(q,a){if(!C||!C.ra||C.ra[q]==null||S.ans[q]==null||S.ans[q]!==C.ra[q])return 0;const lim=(C.lim||30)*1000,sb=C.sb||[500,500];
+  const r=Math.max(0,Math.min(lim,S.rt[q]==null?lim:S.rt[q]));return Math.round(sb[0]+sb[1]*(1-r/lim))}
+function myScore(){let c=0,r=0,p=0;if(C&&C.ra)Object.entries(C.ra).forEach(([q,a])=>{r++;if(S.ans[q]===a)c++;p+=ptsFor(q)});return {c,r,p}}
+const num=n=>Number(n).toLocaleString('en-US');
+function scoreBox(){const m=myScore();return m.r?`<div class="score"><div><span>${esc(STR.totalLabel)}</span><b>${fmt(STR.ptsFmt,{p:num(m.p)})}</b></div><div><span>${esc(STR.scoreLabel)}</span><b>${fmt(STR.scoreOf,{c:m.c,r:m.r})}</b></div></div>`:''}
 function header(){
   $('#mel').textContent=S.name&&!editing?S.name:(netOK()?STR.connected:STR.connecting);
   $('#dot').className='dot'+(netOK()?' on':'');
-  const off=$('#off');const down=Object.keys(NET).length&&!netOK();off.textContent=STR.offline;off.classList.toggle('show',!!(down&&S.name));
+  const off=$('#off');const fb=sync&&sync.fallback(),down=Object.keys(NET).length&&!netOK();off.textContent=fb?STR.fallback:STR.offline;off.classList.toggle('show',!!((down||fb)&&S.name));
 }
 function render(){
   header();
@@ -168,6 +175,7 @@ function renderWait(h,p){
 function deadline(){return (C&&C.dl)||0}
 function renderQ(q,n,closedPhase){
   const done=S.ans[n]!=null,closed=!!closedPhase||Date.now()>deadline();
+  if(!done&&!closed&&C&&C.phase==='open'){const sh=S.shown[n];if(!sh||sh.oa!==C.openAt){S.shown[n]={at:Date.now(),oa:C.openAt};save()}}
   if(!done&&pick&&pick.n!==n)pick=null;
   const sel=done?S.ans[n]:(pick?pick.a:null),nn=String(n).padStart(2,'0');
   $('#app').innerHTML=`<div class="qmeta"><span class="qno">${esc(fmt(STR.qno,{nn,t:NQ()}))}</span>${closed?`<span class="tag closed">${esc(STR.closedTag)}</span>`:''}</div>
@@ -178,6 +186,7 @@ function renderQ(q,n,closedPhase){
   document.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{pick={n,a:+b.dataset.a};renderQ(q,n,closedPhase)});
   const sb=$('#sub');if(sb)sb.onclick=async()=>{
     if(sending||!pick)return;sending=true;
+    const lim=(C.lim||30)*1000,sh=S.shown[n];S.rt[n]=Math.max(0,Math.min(lim,Date.now()-(sh?sh.at:Date.now())));
     S.ans[n]=pick.a;S.pend=true;save();renderQ(q,n,closedPhase);
     await push('answer');sending=false;if(C&&C.q===n&&['open','closed'].includes(C.phase)&&!editing)render();
   };
@@ -192,13 +201,15 @@ function renderReveal(q,n){
   $('#app').innerHTML=`<div class="qmeta"><span class="qno">${esc(fmt(STR.qno,{nn,t:NQ()}))}</span></div>
   <div class="q">${esc(q.q)}</div>
   <div class="opts">${q.o.map((o,k)=>`<button class="opt ${k+1===A?'ok':'ng'}${my===k+1?' mine':''}" disabled><span class="n">${k+1}</span><span>${esc(o)}</span>${my===k+1?`<span class="you">${esc(STR.you)}</span>`:''}</button>`).join('')}</div>
-  <div class="res ${my==null?'':ok?'ok':'ng'}"><div class="r">${esc(my==null?STR.unanswered:ok?STR.correct:STR.wrong)}</div><div class="a">${esc(fmt(STR.answerIs,{a:A}))}</div>${R.e?`<p>${escB(R.e)}</p>`:''}</div>
+  <div class="res ${my==null?'':ok?'ok':'ng'}"><div class="r">${esc(my==null?STR.unanswered:ok?STR.correct:STR.wrong)}<span class="pts">+${num(ptsFor(n))}</span></div><div class="a">${esc(fmt(STR.answerIs,{a:A}))}</div>${R.e?`<p>${escB(R.e)}</p>`:''}</div>
   ${scoreBox()}`;
 }
 function renderEnd(){
   clearInterval(tick);const m=myScore();
+  const sc=Array.isArray(C.sc)?C.sc.filter(x=>typeof x==='number'):[],np=+C.np||sc.length;const rank=sc.length?1+sc.filter(x=>x>m.p).length:0;
   $('#app').innerHTML=`<div class="kick">${esc(STR.endKick)}</div><h1>${esc(STR.endH)}</h1><p class="lead">${esc(STR.endP)}</p>
-  <div class="score"><div><span>${esc(STR.yourScore)}</span><b>${fmt(STR.scoreOf,{c:m.c,r:m.r})}</b></div></div>`;
+  <div class="score big"><div><span>${esc(STR.totalLabel)}</span><b>${fmt(STR.ptsFmt,{p:num(m.p)})}</b></div>${rank?`<div><span>${esc(STR.rankLabel)}</span><b>${fmt(STR.rankFmt,{r:rank,n:np})}</b></div>`:''}</div>
+  <div class="score"><div><span>${esc(STR.scoreLabel)}</span><b>${fmt(STR.scoreOf,{c:m.c,r:m.r})}</b></div></div>`;
 }
 function validCtl(m){return m&&typeof m.sid==='string'&&typeof m.ts==='number'&&['lobby','open','closed','reveal','end'].includes(m.phase)
   &&(m.phase==='lobby'||m.phase==='end'||(Number.isInteger(m.q)&&m.q>=1&&m.q<=QUIZ.length))}
@@ -210,8 +221,8 @@ function onCtl(m,src,retained){
   if(m.ra&&typeof m.ra!=='object')m.ra={};
   if(m.phase==='open'&&typeof m.openAt==='number'&&typeof m.dur==='number')m.dl=m.openAt+m.dur*1000+S.skew+1500;
   if(S.sid!==m.sid){
-    if(S.sid)S.hist[S.sid]=S.ans;
-    S.sid=m.sid;S.ans=S.hist[m.sid]||{};S.pend=false;
+    if(S.sid)S.hist[S.sid]={ans:S.ans,rt:S.rt,shown:S.shown};
+    const h=S.hist[m.sid]||{};S.sid=m.sid;S.ans=h.ans||{};S.rt=h.rt||{};S.shown=h.shown||{};S.pend=false;
     const ks=Object.keys(S.hist);if(ks.length>6)delete S.hist[ks[0]];
     save();
   }
@@ -220,7 +231,8 @@ function onCtl(m,src,retained){
   if(newSid||prev.phase!==m.phase||prev.q!==m.q||prev.openAt!==m.openAt){if(!editing)render();push(newSid&&S.name?'join':'sync')}
   else header();
 }
-const sync=QSync.create({topic:TP,role:'player',onCtl,onStatus:s=>{NET=s;header()},onReconnect:()=>push(S.pend?'answer':'sync')});
+var sync=QSync.create({topic:TP,role:'player',only:ONLY,onCtl,onStatus:s=>{NET=s;header()},onReconnect:()=>push(S.pend?'answer':'sync'),
+  onFallback:on=>{header();if(on)push('answer')}});
 render();sync.start();
 /* re-send: pending answers every 4s; otherwise a light sync every 15s if nothing sent for 45s */
 setInterval(()=>{if(S.pend&&S.name&&S.sid){push('answer').then(ok=>{if(ok&&C&&['open','closed'].includes(C.phase)&&!editing)render()})}},4000);
