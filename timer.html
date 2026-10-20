@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b1430">
+<title>Timer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;700;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b1430;--fg:#fff;--sub:rgba(255,255,255,.66);--blue:#5b93ff;--warn:#ffb547;--ng:#ff7a59;
+  --font:"Inter","Noto Sans JP","Hiragino Sans",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--font);-webkit-font-smoothing:antialiased;overflow:hidden}
+body{display:flex;flex-direction:column;min-height:100dvh}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:max(10px,env(safe-area-inset-top)) 16px 8px;font-size:14px;color:var(--sub)}
+.st{display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:#7c869a}.dot.on{background:#34c38f}
+.seg{display:flex;border:1px solid rgba(255,255,255,.3);border-radius:8px;overflow:hidden}
+.seg button{background:none;border:0;color:var(--sub);font:inherit;font-size:14px;padding:8px 14px;cursor:pointer}
+.seg button.on{background:rgba(255,255,255,.18);color:#fff;font-weight:700}
+main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 4vw;min-height:0}
+.title{font-size:clamp(15px,2.8vw,28px);color:var(--sub);max-width:92vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.label{font-size:clamp(22px,5.2vw,56px);font-weight:700;color:#9fc0ff;margin-top:.8vh}
+.num{font-family:"Inter",sans-serif;font-weight:300;font-size:min(30vw,44vh);line-height:1.02;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.num.long{font-size:min(21vw,38vh)}
+.num.warn{color:var(--warn)}.num.done{color:var(--ng);animation:pulse 1s ease-in-out infinite}
+.num.pause{opacity:.55}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.bar{width:min(90vw,1300px);height:12px;background:rgba(255,255,255,.14);border-radius:6px;overflow:hidden;margin-top:1.2vh}
+.bar i{display:block;height:100%;background:var(--blue);border-radius:6px}
+.bar.warn i{background:var(--warn)}
+.steps{display:flex;gap:6px;margin-top:2vh;flex-wrap:wrap;justify-content:center}
+.steps span{font-size:clamp(14px,2.4vw,24px);padding:.6vh 1.4vw;border-radius:8px;border:1px solid rgba(255,255,255,.25);color:var(--sub)}
+.steps span.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
+.steps span.done{opacity:.45}
+.cue{word-break:auto-phrase;text-wrap:balance;margin-top:2.4vh;background:var(--warn);color:#1a1200;font-weight:800;font-size:clamp(18px,4vw,44px);line-height:1.35;padding:1.4vh 2.4vw;border-radius:14px;max-width:94vw}
+.msg{font-size:clamp(16px,3vw,28px);color:var(--sub);margin-top:2vh}
+.local{display:none;flex-wrap:wrap;gap:10px;justify-content:center;padding:10px 14px max(14px,env(safe-area-inset-bottom))}
+body.lmode .local{display:flex}
+.local button{font:inherit;font-size:16px;color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.28);border-radius:10px;padding:12px 16px;min-height:48px;cursor:pointer}
+.local button.on{background:var(--blue);border-color:var(--blue);font-weight:700}
+.local .ctl{background:#fff;color:#0b1430;font-weight:800;border-color:#fff}
+.hint{font-size:13px;color:var(--sub);text-align:center;padding:0 16px 10px}
+</style>
+</head>
+<body>
+<div class="top"><div class="st"><span class="dot" id="dot"></span><span id="net"></span></div><div class="seg"><button id="m-live" class="on"></button><button id="m-local"></button></div></div>
+<main>
+  <div class="title" id="title"></div>
+  <div class="label" id="label"></div>
+  <div class="num" id="num">--:--</div>
+  <div class="bar" id="bar"><i id="bi" style="width:0"></i></div>
+  <div class="steps" id="steps"></div>
+  <div class="cue" id="cue" hidden></div>
+  <div class="msg" id="msg"></div>
+</main>
+<div class="local" id="local"></div>
+<div class="hint" id="hint"></div>
+<script src="mqtt.min.js"></script>
+<script src="sync.js"></script>
+<script>
+/* Timer mirror for presenters (open on a second phone/tablet facing the speaker).
+   Live: mirrors the deck's current timer via QSync (?t=<topic>). Local: manual presets, works offline. */
+const DEFAULT_LANG='ja';
+(function(){const qp=new URLSearchParams(location.search);const want=(qp.get('lang')||DEFAULT_LANG).toLowerCase().replace(/[^a-z]/g,'').slice(0,5)||DEFAULT_LANG;
+  function load(l,fb){const s=document.createElement('script');s.src='quiz.'+l+'.js';s.onload=()=>boot();s.onerror=()=>{if(fb&&l!==DEFAULT_LANG)load(DEFAULT_LANG,false);else boot()};document.head.appendChild(s)}
+  load(want,true)})();
+function boot(){
+const PACK=window.QUIZ_PACK||{lang:'en',topic:'',tstr:{title:'Timer',waiting:'Waiting for the deck…',noTimer:'No timer on this slide',live:'Live',local:'Local',start:'Start',pause:'Pause',resume:'Resume',reset:'Reset',next:'Next',connecting:'Connecting…',connected:'Synced',offline:'Offline (local mode works)',hint:'Use Local if the deck cannot sync',done:"Time's up",paused:'Paused',presets:[{l:'5 min',ph:[['',300]]}]}};
+const T=PACK.tstr,$=s=>document.querySelector(s);
+document.documentElement.lang=PACK.lang;document.title=T.title;
+$('#m-live').textContent=T.live;$('#m-local').textContent=T.local;$('#hint').textContent=T.hint;
+const tq=new URLSearchParams(location.search).get('t');
+const TP=(tq&&/^[A-Za-z0-9_-]{3,60}$/.test(tq))?tq:PACK.topic;
+const pad2=n=>String(n).padStart(2,'0');
+const fmtT=ms=>{const s=Math.max(0,Math.ceil(ms/1000)),h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?`${h}:${pad2(m)}:${pad2(x)}`:`${m}:${pad2(x)}`};
+let mode='live',LIVE=null,SKEW=0,NET={},LOC=null,AC=null,WL=null,lastDone=false;
+function unlock(){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume()}catch(e){}
+  try{if(!WL&&navigator.wakeLock)navigator.wakeLock.request('screen').then(w=>{WL=w;w.addEventListener('release',()=>WL=null)}).catch(()=>{})}catch(e){}}
+function chime(n){try{if(!AC)return;for(let i=0;i<n;i++){const t=AC.currentTime+i*.42;[[880,.2],[1320,.1]].forEach(([f,v])=>{const o=AC.createOscillator(),g=AC.createGain();o.type='sine';o.frequency.value=f;
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(v,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+1.3);o.connect(g);g.connect(AC.destination);o.start(t);o.stop(t+1.4)})}}catch(e){}}
+document.addEventListener('click',unlock);
+/* ---- live ---- */
+function onTimer(m,src,retained){
+  if(!m||typeof m.ts!=='number')return;
+  if(!retained&&src!=='ntfy'){const sk=Date.now()-m.ts;if(Math.abs(sk)<180000)SKEW=sk}
+  if(LIVE&&m.ts<=LIVE.ts)return;
+  const s=Object.assign({},m);
+  if(s.on&&s.st==='run')s.lend=(!retained&&src!=='ntfy')?Date.now()+(+s.rem||0):(+s.end||0)+SKEW;
+  LIVE=s;if(mode==='live')draw();
+}
+function liveView(){const s=LIVE;if(!s)return {msg:T.waiting};
+  if(!s.on)return {title:s.title||'',msg:T.noTimer};
+  const ph=Array.isArray(s.phases)?s.phases:[];let i=+s.i||0,st=s.st,rem=+s.rem||0;
+  if(st==='run'){let end=s.lend;rem=end-Date.now();while(rem<=0&&i<ph.length-1){i++;end+=ph[i].sec*1000;rem=end-Date.now()}if(rem<=0){rem=0;st='done'}}
+  return {title:s.title||s.sess||'',label:i===(+s.i||0)?s.label:(ph[i]&&ph[i].n)||'',ph,i,st,rem,cue:(i===ph.length-1&&st!=='idle')?(s.cue||''):''}}
+/* ---- local ---- */
+function presets(){return (T.presets||[]).filter(p=>Array.isArray(p.ph)&&p.ph.length)}
+function setPreset(k){const p=presets()[k];if(!p)return;LOC={k,ph:p.ph.map(([n,sec])=>({n,sec:+sec})),i:0,st:'idle',rem:p.ph[0][1]*1000,end:0,title:p.l};drawLocalUI();draw()}
+function locView(){const s=LOC;if(!s)return {msg:''};let rem=s.st==='run'?s.end-Date.now():s.rem;
+  if(s.st==='run'&&rem<=0){if(s.i<s.ph.length-1){s.i++;s.end+=s.ph[s.i].sec*1000;rem=s.end-Date.now();chime(1)}else{s.st='done';s.rem=0;rem=0;chime(3)}}
+  return {title:s.title,label:s.ph[s.i].n,ph:s.ph,i:s.i,st:s.st,rem}}
+function locStart(){if(!LOC)return;unlock();if(LOC.st==='done'){LOC.i=0;LOC.rem=LOC.ph[0].sec*1000}if(LOC.st!=='run'){LOC.st='run';LOC.end=Date.now()+LOC.rem}drawLocalUI()}
+function locPause(){if(!LOC||LOC.st!=='run')return;LOC.rem=Math.max(0,LOC.end-Date.now());LOC.st='pause';drawLocalUI()}
+function locReset(){if(!LOC)return;LOC.i=0;LOC.st='idle';LOC.rem=LOC.ph[0].sec*1000;drawLocalUI();draw()}
+function drawLocalUI(){const el=$('#local');el.innerHTML=presets().map((p,k)=>`<button data-p="${k}" class="${LOC&&LOC.k===k?'on':''}">${p.l.replace(/[<>&]/g,'')}</button>`).join('')+
+  `<button class="ctl" data-a="go">${LOC&&LOC.st==='run'?T.pause:(LOC&&LOC.st==='pause'?T.resume:T.start)}</button><button data-a="next">${T.next}</button><button data-a="reset">${T.reset}</button>`}
+document.getElementById('local').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.p!=null){setPreset(+b.dataset.p);return}
+  if(b.dataset.a==='go'){LOC&&LOC.st==='run'?locPause():locStart()}
+  if(b.dataset.a==='reset')locReset();
+  if(b.dataset.a==='next'&&LOC){LOC.i=0;LOC.st='idle';LOC.rem=LOC.ph[0].sec*1000;locStart()}draw()});
+function setMode(m){mode=m;document.body.classList.toggle('lmode',m==='local');$('#m-live').classList.toggle('on',m==='live');$('#m-local').classList.toggle('on',m==='local');
+  if(m==='local'&&!LOC)setPreset(0);drawLocalUI();draw()}
+$('#m-live').onclick=()=>{unlock();setMode('live')};$('#m-local').onclick=()=>{unlock();setMode('local')};
+/* ---- draw ---- */
+function draw(){
+  const v=mode==='live'?liveView():locView();
+  $('#title').textContent=v.title||'';$('#label').textContent=v.label||'';
+  const num=$('#num'),has=v.ph&&v.ph.length;
+  num.textContent=has?fmtT(v.rem):'--:--';
+  const tot=has?v.ph[v.i].sec*1000:1,f=has?Math.max(0,Math.min(1,v.rem/tot)):0;
+  const warn=has&&v.st==='run'&&v.rem<=(tot>=300000?60000:10000);
+  num.className='num'+(has&&v.ph.some(p=>p.sec>=3600)?' long':'')+(warn?' warn':'')+(v.st==='done'?' done':'')+(v.st==='pause'?' pause':'');
+  $('#bi').style.width=(100*f)+'%';$('#bar').className='bar'+(warn?' warn':'');$('#bar').style.visibility=has?'visible':'hidden';
+  $('#steps').innerHTML=has&&v.ph.length>1?v.ph.map((p,j)=>`<span class="${j===v.i?'on':j<v.i?'done':''}">${String(p.n).replace(/[<>&]/g,'')} ${Math.round(p.sec/60)}′</span>`).join(''):'';
+  const cue=$('#cue');cue.hidden=!v.cue;cue.textContent=v.cue||'';
+  $('#msg').textContent=v.msg||(v.st==='done'?T.done:v.st==='pause'?T.paused:'');
+  const isDone=v.st==='done';if(mode==='live'&&isDone&&!lastDone)chime(3);lastDone=isDone;
+}
+const sync=TP&&window.QSync?QSync.create({topic:TP,role:'timer',onTimer,onStatus:s=>{NET=s;const on=Object.values(s).some(x=>x==='live');
+  $('#dot').className='dot'+(on?' on':'');$('#net').textContent=on?T.connected:(Object.values(s).some(x=>x==='connecting')?T.connecting:T.offline)}}):null;
+if(sync)sync.start();else{$('#net').textContent=T.offline;setMode('local')}
+setTimeout(()=>{if(mode==='live'&&!LIVE)$('#msg').textContent=T.waiting+' '+T.hint},8000);
+drawLocalUI();draw();setInterval(draw,250);
+}
+</script>
+</body>
+</html>
