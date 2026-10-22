@@ -113,6 +113,10 @@
         let b=false;if(useNtfy||!a)b=await ntfyPub(o.topic+'-ctl',state);
         return a||b;
       },
+      // host: one-off (non-retained) ctl, e.g. the "purged" signal before deleting retained data
+      ctlOnce(state){state.k='ctl';return mqttPub(base+'/ctl',state,false)},
+      // player: remove own retained snapshot
+      clearOwn(pid){return /^[\w-]{1,40}$/.test(pid)?mqttPub(base+'/p/'+pid,'',true):Promise.resolve(false)},
       // host: timer mirror state (MQTT only)
       publishTimer(state){state.k='tm';return mqttPub(base+'/tm',state,true)},
       // player: MQTT; ntfy only while in last-resort fallback (mode 'never' = MQTT only)

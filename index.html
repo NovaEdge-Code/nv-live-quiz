@@ -123,6 +123,8 @@ function snapshot(){return {v:3,sid:S.sid||'',pid:S.pid,name:S.name,ans:S.ans,rt
 async function push(kind){
   /* without a session id we can only say hello in last-resort mode (lets the host start posting to ntfy) */
   if(!S.name||(!S.sid&&!sync.fallback()))return false;
+  if(S.purged&&S.purged===S.sid)return false;                       // host purged this session's public data
+  if(kind==='sync'&&!(C&&C.sid===S.sid&&C.phase!=='end'))return false;  // sync only while a live session is running
   const ok=await sync.publishPlayer(snapshot(),kind==='sync'?'never':'answer');
   if(ok){lastSent=Date.now();if(S.pend){S.pend=false;save()}}
   return ok;
@@ -215,6 +217,7 @@ function validCtl(m){return m&&typeof m.sid==='string'&&typeof m.ts==='number'&&
   &&(m.phase==='lobby'||m.phase==='end'||(Number.isInteger(m.q)&&m.q>=1&&m.q<=QUIZ.length))}
 function onCtl(m,src,retained){
   if(!validCtl(m))return;
+  if(m.purge){if(m.sid===S.sid&&S.purged!==m.sid){S.purged=m.sid;S.pend=false;save();sync.clearOwn(S.pid)}return}
   /* clock offset (local − host) learned only from live MQTT messages; retained/ntfy-cached ones can be old */
   if(!retained&&src!=='ntfy'){const sk=Date.now()-m.ts;if(Math.abs(sk)<180000){S.skew=sk;save()}}
   if(C&&m.ts<=C.ts)return;
