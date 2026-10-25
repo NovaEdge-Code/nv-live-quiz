@@ -205,10 +205,12 @@ function renderWait(h,p){
   $('#chg').onclick=()=>{if(confirm(STR.confirmChange)){editing=true;render()}};
 }
 function deadline(){return (C&&C.dl)||0}
-const capRt=(n,t)=>{const lim=((C&&C.lim)||30)*1000,sh=S.shown[n];return Math.max(0,Math.min(lim,t-(sh?sh.at:t)))};
-/* send the selected option (rt = the moment it was selected, so an automatic send is as fair as pressing the button) */
+const capRt=(n,t)=>{const lim=((C&&C.lim)||30)*1000,sh=S.shown[n];return sh?Math.max(0,Math.min(lim,t-sh.at)):lim};   // never seen here → no bonus
+/* send the selected option. Speed bonus = SEND time, measured on this phone from when the question appeared here
+   (S.shown, kept across a reload). An automatic send happens at the moment answering closes, so it gets the bonus
+   for that moment (at the time limit: the minimum, i.e. a correct answer ≈ 500). */
 async function sendPick(n,auto){const p=pick;if(!p||p.n!==n||S.ans[n]!=null||sending&&!auto)return;
-  S.rt[n]=capRt(n,p.t);S.ans[n]=p.a;if(auto)S.auto[n]=1;S.pick=null;pick=null;S.pend=true;save();
+  S.rt[n]=capRt(n,Date.now());S.ans[n]=p.a;if(auto)S.auto[n]=1;S.pick=null;pick=null;S.pend=true;save();
   if(!editing)render();sending=true;await push('answer');sending=false;if(!editing)render()}
 /* auto-submit: a selected but unsent option goes out when answering closes (deck closed it / the phone's timer is 0) */
 function autoCheck(){const p=pick;if(!p||!C)return;
