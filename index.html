@@ -154,7 +154,7 @@ function render(){
 }
 function renderJoin(){
   clearInterval(tick);const val=draft!=null?draft:S.name;
-  $('#app').innerHTML=`<div class="kick">${esc(STR.joinKick)}</div><h1>${esc(STR.joinH)}</h1>
+  $('#app').innerHTML=`${S.wasReset?`<div class="msg warn" id="rsm">${esc(STR.resetMsg||'')}</div>`:''}<div class="kick">${esc(STR.joinKick)}</div><h1>${esc(STR.joinH)}</h1>
   <p class="lead">${esc(fmt(STR.joinLead,{n:NQ()}))}</p>${REHEARSAL?`<span class="rh">${esc(STR.rehearsal)}</span>`:''}
   <label class="lbl" for="nm">${esc(STR.nameLabel)}</label>
   <input id="nm" maxlength="30" autocomplete="nickname" enterkeyhint="go" placeholder="${esc(STR.namePh)}" value="${esc(val)}">
@@ -163,7 +163,7 @@ function renderJoin(){
   const i=$('#nm'),b=$('#go');
   i.addEventListener('input',()=>{draft=i.value;b.disabled=!i.value.trim()});
   const join=()=>{const nm=i.value.replace(/\s+/g,' ').trim().slice(0,30);if(!nm){alert(STR.nameNeeded);return}
-    S.name=nm;editing=false;draft=null;save();push('join');render()};
+    S.name=nm;S.wasReset=false;editing=false;draft=null;save();push('join');render()};
   b.onclick=join;i.addEventListener('keydown',e=>{if(e.key==='Enter')join()});
 }
 function renderWait(h,p){
@@ -215,8 +215,22 @@ function renderEnd(){
 }
 function validCtl(m){return m&&typeof m.sid==='string'&&typeof m.ts==='number'&&['lobby','open','closed','reveal','end'].includes(m.phase)
   &&(m.phase==='lobby'||m.phase==='end'||(Number.isInteger(m.q)&&m.q>=1&&m.q<=QUIZ.length))}
+/* 「リハーサル後の全リセット」 on the deck: forget this session, clear our public snapshot, back to the join screen
+   (the nickname stays filled in). Triggered by the reset signal, or by a new reset epoch (rs) in the session state. */
+function resetHere(rs){
+  if(S.pid&&S.name)sync.clearOwn(S.pid);
+  draft=S.name||draft;S.name='';S.sid=null;S.ans={};S.rt={};S.shown={};S.hist={};S.pend=false;S.purged=null;S.rs=rs;S.wasReset=true;
+  C=null;pick=null;editing=false;save();render();
+}
 function onCtl(m,src,retained){
   if(!validCtl(m))return;
+  /* reset epochs are "<ms>-<random>"; only a newer one counts (an old retained state must never kick anyone out) */
+  if(typeof m.rs==='string'&&m.rs){const t=x=>parseInt(x,10)||0,newer=!S.rs||t(m.rs)>t(S.rs);
+    if(m.reset){if(newer&&S.rs!==m.rs){if(S.name)resetHere(m.rs);else{S.rs=m.rs;save()}}return}
+    if(newer&&S.rs!==m.rs){if(S.rs&&S.name)resetHere(m.rs);else{S.rs=m.rs;save()}}
+    else if(S.rs!==m.rs&&!newer)return;            // state from before the last reset: ignore
+  }
+  if(m.reset)return;
   if(m.purge){if(m.sid===S.sid&&S.purged!==m.sid){S.purged=m.sid;S.pend=false;save();sync.clearOwn(S.pid)}return}
   /* clock offset (local − host) learned only from live MQTT messages; retained/ntfy-cached ones can be old */
   if(!retained&&src!=='ntfy'){const sk=Date.now()-m.ts;if(Math.abs(sk)<180000){S.skew=sk;save()}}
