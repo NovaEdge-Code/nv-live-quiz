@@ -187,12 +187,12 @@ function renderJoin(){
   $('#app').innerHTML=`${S.wasReset?`<div class="msg warn" id="rsm">${esc(STR.resetMsg||'')}</div>`:''}<div class="kick">${esc(STR.joinKick)}</div><h1>${esc(STR.joinH)}</h1>
   <p class="lead">${esc(fmt(STR.joinLead,{n:NQ()}))}</p>${REHEARSAL?`<span class="rh">${esc(STR.rehearsal)}</span>`:''}
   <label class="lbl" for="nm">${esc(STR.nameLabel)}</label>
-  <input id="nm" maxlength="30" autocomplete="nickname" enterkeyhint="go" placeholder="${esc(STR.namePh)}" value="${esc(val)}">
+  <input id="nm" maxlength="40" autocomplete="name" enterkeyhint="go" placeholder="${esc(STR.namePh)}" value="${esc(val)}">
   <button class="btn" id="go" ${val.trim()?'':'disabled'}>${esc(STR.joinBtn)}</button>
   <p class="priv">${esc(STR.privacy)}</p>`;
   const i=$('#nm'),b=$('#go');
   i.addEventListener('input',()=>{draft=i.value;b.disabled=!i.value.trim()});
-  const join=()=>{const nm=i.value.replace(/\s+/g,' ').trim().slice(0,30);if(!nm){alert(STR.nameNeeded);return}
+  const join=()=>{const nm=i.value.replace(/\s+/g,' ').trim().slice(0,40);if(!nm){alert(STR.nameNeeded);return}
     S.name=nm;S.wasReset=false;editing=false;draft=null;save();push('join');render()};
   b.onclick=join;i.addEventListener('keydown',e=>{if(e.key==='Enter')join()});
 }
